@@ -1,0 +1,143 @@
+#include <Audio.h>
+#include <Wire.h>
+#include <SPI.h>
+#include <SD.h>
+#include <SerialFlash.h>
+
+//#define EKG A0 //we are reading from AnalogIn 0
+#define BUFFER_SIZE 1000  //sampling buffer size MUST DO MORE THAN CERTAIN SIZE OR ELSE THERE WILL NOT BE ENOUGH TIME TO CAPTURE RECORDING
+//#define SIZE_OF_COMMAND_BUFFER 30 //command buffer size
+//#define LENGTH_OF_MESSAGE_IMPULS 100 // length of message impuls in ms
+
+//define pins for audio shield
+#define SDCARD_CS_PIN    10
+#define SDCARD_MOSI_PIN  7
+#define SDCARD_SCK_PIN   14
+
+//initialize connections
+AudioPlaySdWav           playWav1;
+AudioOutputI2S           audioOutput;
+AudioConnection          patchCord1(playWav1, 0, audioOutput, 0);
+AudioConnection          patchCord2(playWav1, 1, audioOutput, 1);
+AudioControlSGTL5000     sgtl5000_1;
+ 
+
+IntervalTimer myTimer;
+
+ 
+const int abr = A0; //read from pinA0 for abr
+const int trig = A1;//read from pin A1 for trigger
+
+ 
+int buffersize = BUFFER_SIZE;
+
+int counter = 0;//index for sampling circular buffer
+
+int marker = 0;//marker to determine if buffer is filled
+
+byte writeByte;
+
+//char commandBuffer[SIZE_OF_COMMAND_BUFFER];//receiving command buffer
+
+int reading1[BUFFER_SIZE]; //Sampling buffer for abr
+
+int reading2[BUFFER_SIZE]; //Sampling buffer for trig
+
+ 
+
+//int numberOfChannels = 2;//current number of channels sampling
+
+int tempSample = 0;//temporary 
+
+//int commandMode = 0;//flag for command mode. Don't send data when in command mode
+
+
+
+void setup(){
+
+  Serial.begin(9600); //Serial communication baud rate (alt. 115200) 
+
+  delay(300); //whait for init of serial
+
+  Serial.println("StartUp!");
+  
+  AudioMemory(60);
+  sgtl5000_1.enable();
+  sgtl5000_1.volume(0.5);
+  SPI.setMOSI(SDCARD_MOSI_PIN);
+  SPI.setSCK(SDCARD_SCK_PIN);
+  // if (!(SD.begin(SDCARD_CS_PIN))) {
+  //   while (1) {
+  //     Serial.println("Unable to access the SD card");
+  //     delay(500);
+  //   }
+  // }
+
+  Serial.setTimeout(2);
+   
+
+  myTimer.begin(readData, 50);  // blinkLED to run every 0.05 ms or 20000Hz sampling rate
+  noInterrupts();
+
+}
+
+
+
+
+
+void readData() {
+  //Interrupt at the timing frequency you set above to measure to measure AnalogIn, and filling the buffers
+  if (marker==0){
+    // ABR input
+    //Serial.println("readingDATA...");
+    tempSample = analogRead(abr);
+
+    reading1[counter] =  tempSample;//Mark begining of the frame by setting MSB to 1
+
+
+    // trigger input
+
+    tempSample = analogRead(trig);
+
+    reading2[counter] =  tempSample;
+
+    counter = counter+1;
+
+    if(counter==buffersize)
+    {
+      counter = 0;
+      marker=1;
+    }
+  }
+}
+
+void playFile(const char *filename) // function to play file from SD card
+{
+  playWav1.play(filename);
+}
+
+bool active = true;
+int numReps = 5;
+ 
+
+void loop(){  
+  if (Serial.available()>0){
+    int value=Serial.read();
+    if (value==1){
+      if (active) {
+        for (int i = 0; i<numReps; i++){
+          interrupts();
+          marker=0;
+          noInterrupts(); //stop readData from running to serial print data into serialport
+          for (int j=0; j<BUFFER_SIZE; j++){
+            Serial.print(reading1[j]);
+            Serial.print(",");
+            Serial.println(reading2[j]);
+          }
+          Serial.println("STOP");
+        }
+        active=false;
+      }
+    }
+  }
+}
